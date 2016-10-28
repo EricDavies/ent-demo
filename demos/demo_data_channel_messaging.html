@@ -3,21 +3,21 @@
     <head>
         <meta http-equiv="Content-Type" content="text/html; charset=utf-8" /> <!--skip-->
         <title>EasyRTC Demo: Data Channel Messaging</title>
-        <link rel="stylesheet" type="text/css" href="/easyrtc/easyrtc.css" />
+       <link rel="stylesheet" type="text/css" href="../easyrtc.css" />
 
         <!--hide-->
         <link rel="stylesheet" type="text/css" href="css/landing.css" />
-
+        <link rel="stylesheet" type="text/css" href="css/demo_audio_video_simple.css" />
         <!-- Prettify Code -->
-        <script type="text/javascript" src="js/prettify/prettify.js"></script>
-        <link rel="stylesheet" type="text/css" href="js/prettify/prettify.css" />
-        <script type="text/javascript" src="js/prettify/loadAndFilter.js"></script>
-        <script type="text/javascript" src="js/prettify/jquery.min.js"></script>
+        <script type="text/javascript" src="../easyrtc_lang.js"></script>
+        <script src="../jsonpatch.js"></script>
+        <script src="../adapter/release/adapter.js"></script>
+        <script src="../mqtt/mqttws31.js" type="application/javascript"></script>
+        <script>
+            console.log("loaded mqtt library");
+        </script>
+    <script data-main="../easyrtc_emulation.js" src="../require.js"></script>
 
-        <!--show-->
-        <!-- Assumes global locations for socket.io.js and easyrtc.js -->
-        <script src="/socket.io/socket.io.js"></script>
-        <script type="text/javascript" src="/easyrtc/easyrtc.js"></script>
         <script type="text/javascript" src="js/demo_data_channel_messaging.js"></script>
         <!--hide-->
         <!-- Styles used within the demo -->
@@ -42,7 +42,13 @@
         </style>
         <!--show-->
     </head>
-    <body onload="connect()">
+    <body>
+    <script type="text/javascript">
+        setTimeout(function(){
+            easyrtc.setSocketUrl("test.easyrtc.com:9001");
+            connect();
+        }, 3000);
+    </script>
         <!--hide-->
         <div id="container">
             <div id="header">
@@ -82,12 +88,6 @@
             </pre>
 
 
-                <!-- Runs the SyntaxHighlighter -->
-                <script type="text/javascript">
-                    loadAndFilter(window.location.href, "prettyHTML",2 );
-                    loadAndFilter(getHelperPath("js"), "prettyJS", 2);
-                </script>
-
                 <!-- End Main Content -->
             </div>
 
@@ -100,6 +100,7 @@
 
             <br>
         </div>
-        <!--show-->
+         <!--show-->
+
     </body>
 </html>

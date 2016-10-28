@@ -27,7 +27,6 @@ define(["require", "exports", "./JSONPatchBuilder"], function (require, exports,
             this.roomData = {};
             this.myUserCfg = {};
             this.selfUserName = null;
-            this.peerApiFields = {};
             this.transport = transport;
             this.transport.setListener(this);
             this.listener = roomListener;
@@ -149,6 +148,38 @@ define(["require", "exports", "./JSONPatchBuilder"], function (require, exports,
         RoomControlClient.prototype.buildSuccessPromise = function () {
             return new Promise(function (resolve, reject) {
                 resolve(undefined);
+            });
+        };
+        RoomControlClient.prototype.getRoomField = function (roomName, fieldName) {
+            var fields = this.getRoomFields(roomName);
+            if (!fields) {
+                return {};
+            }
+            return fields[fieldName];
+        };
+        ;
+        RoomControlClient.prototype.getRoomFields = function (roomName) {
+            var room = this.roomData[roomName];
+            if (!room) {
+                return null;
+            }
+            var fields = room.roomFields;
+            return (fields) ? fields : {};
+        };
+        RoomControlClient.prototype.getRoomApiField = function (roomName, easyrtcid, fieldName) {
+            var room = this.roomData[roomName];
+            if (!room || !room.peers) {
+                return null;
+            }
+            var peer = room.peers[easyrtcid];
+            return (!peer || !peer.apiFields) ? undefined : peer[fieldName].fieldValue;
+        };
+        ;
+        RoomControlClient.prototype.sendPeerMessage = function (message, ackHandler) {
+            this.transport.sendRequest2("peer2PeerMessage", message).then(function () {
+                ackHandler({ msgType: "ack", msgData: [] });
+            }, function (error) {
+                ackHandler({ msgType: "error", msgData: { errorText: error.message } });
             });
         };
         return RoomControlClient;

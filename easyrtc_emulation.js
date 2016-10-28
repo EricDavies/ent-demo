@@ -98,10 +98,21 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
         }
         return UserSettings;
     }());
+    var DesiredVideoProperties = (function () {
+        function DesiredVideoProperties() {
+        }
+        return DesiredVideoProperties;
+    }());
     var Easyrtc = (function () {
         function Easyrtc() {
+            this.applicationName = "default";
             this.easyrtcsid = null;
+            this._desiredVideoProperties = null;
             this.roomData = {};
+            this.receivePeer = {
+                cb: null,
+                msgTypes: {}
+            };
             this.errCodes = {
                 BAD_NAME: "BAD_NAME",
                 CALL_ERR: "CALL_ERR",
@@ -143,7 +154,8 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
              *
              * During ICE negotiation the peer connection fires the iceconnectionstatechange event.
              * It is sometimes useful for the application to learn about these changes, especially if the ICE connection fails.
-             * The function should accept two parameters: the easyrtc id of the peer and the iceconnectionstatechange event target.
+             * The function should accept three parameters: the easyrtc id of the peer, the iceconnectionstatechange event target,
+             * and the ice connection state itself.
              * @param {Function} listener
              */
             this.setIceConnectionStateChangeListener = function (listener) {
@@ -302,8 +314,6 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
              */
             this.roomJoin = {};
             /** @private */
-            this._desiredVideoProperties = {}; // default camera, why is this a public item?
-            /** @private */
             this._desiredAudioProperties = {}; // default camera
             /** This function is used to set the dimensions of the local camera, usually to get HD.
              *  If called, it must be called before calling easyrtc.initMediaSource (explicitly or implicitly).
@@ -336,10 +346,6 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             this.onDataChannelClose = null;
             /** @private */
             this.lastLoggedInList = {};
-            /** @private */
-            // private receivePeer: ReceivePeerCallbackMap = {
-            //     msgTypes:{}
-            // };
             /** @private */
             this.receiveServerCB = null;
             /** @private */
@@ -381,6 +387,30 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             };
             this.roomEntryListener = null;
             /**
+             * Returns the user assigned id's of currently active local media streams.
+             * @return {Array}
+             */
+            this.getLocalMediaIds = function () {
+                var mediaIds = [];
+                for (var name_1 in this.namedLocalMediaStreams) {
+                    mediaIds.push(this.namedLocalMediaStreams[name_1].id);
+                }
+                return mediaIds;
+            };
+            /**
+             * This function is used to enable and disable the local microphone. If you disable
+             * the microphone, sounds stops being transmitted to your peers. By default, the microphone
+             * is enabled.
+             * @param {Boolean} enable - true to enable the microphone, false to disable it.
+             * @param {String} streamName - an optional streamName
+             */
+            this.enableMicrophone = function (enable, streamName) {
+                var stream = this.getLocalMediaStream(streamName);
+                if (stream && stream.getAudioTracks) {
+                    MR.enableMediaTracks(enable, stream.getAudioTracks());
+                }
+            };
+            /**
              * @private
              * @param {String} x
              */
@@ -400,10 +430,10 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
                     }
                     catch (oops) {
                         var result = "{";
-                        for (var name_1 in x) {
-                            if (x.hasOwnProperty(name_1)) {
-                                if (typeof x[name_1] === 'string') {
-                                    result = result + name_1 + "='" + x[name_1] + "' ";
+                        for (var name_2 in x) {
+                            if (x.hasOwnProperty(name_2)) {
+                                if (typeof x[name_2] === 'string') {
+                                    result = result + name_2 + "='" + x[name_2] + "' ";
                                 }
                             }
                         }
@@ -447,70 +477,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             this.setOnStreamClosed = function (onStreamClosed) {
                 this.onStreamClosed = onStreamClosed;
             };
-            /**
-             * Get an array of easyrtcids that are using a particular username
-             * @param {String} username - the username of interest.
-             * @param {String} room - an optional room name argument limiting results to a particular room.
-             * @returns {Array} an array of {easyrtcid:id, roomName: roomName}.
-             */
-            this.usernameToIds = function (username, room) {
-                // var results = [];
-                // var id, roomName;
-                // for (roomName in lastLoggedInList) {
-                //     if (!lastLoggedInList.hasOwnProperty(roomName)) {
-                //         continue;
-                //     }
-                //     if (room && roomName !== room) {
-                //         continue;
-                //     }
-                //     for (id in lastLoggedInList[roomName]) {
-                //         if (!lastLoggedInList[roomName].hasOwnProperty(id)) {
-                //             continue;
-                //         }
-                //         if (lastLoggedInList[roomName][id].username === username) {
-                //             results.push({
-                //                 easyrtcid: id,
-                //                 roomName: roomName
-                //             });
-                //         }
-                //     }
-                // }
-                // return results;
-                return [""];
-            };
-            /**
-             * Sets the listener for socket disconnection by external (to the API) reasons.
-             * @param {Function} disconnectListener takes no arguments and is not called as a result of calling easyrtc.disconnect.
-             * @example
-             *    easyrtc.setDisconnectListener(function(){
-             *        easyrtc.showError("SYSTEM-ERROR", "Lost our connection to the socket server");
-             *    });
-             */
             this.disconnectListener = null;
-            /**
-             * Convert an easyrtcid to a user name. This is useful for labeling buttons and messages
-             * regarding peers.
-             * @param {String} easyrtcid
-             * @return {String} the username associated with the easyrtcid, or the easyrtcid if there is
-             * no associated username.
-             * @example
-             *    console.log(easyrtcid + " is actually " + easyrtc.idToName(easyrtcid));
-             */
-            this.idToName = function (easyrtcid) {
-                return easyrtcid;
-                //     var roomName;
-                //     for (roomName in lastLoggedInList) {
-                //         if (!lastLoggedInList.hasOwnProperty(roomName)) {
-                //             continue;
-                //         }
-                //         if (lastLoggedInList[roomName][easyrtcid]) {
-                //             if (lastLoggedInList[roomName][easyrtcid].username) {
-                //                 return lastLoggedInList[roomName][easyrtcid].username;
-                //             }
-                //         }
-                //     }
-                //     return easyrtcid;
-            };
             /** Value returned by easyrtc.getConnectStatus if the other user isn't connected to us. */
             this.NOT_CONNECTED = "not connected";
             /** Value returned by easyrtc.getConnectStatus if the other user is in the process of getting connected */
@@ -794,9 +761,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          * @example easyrtc.setVideoSource( videoSrcId);
          */
         Easyrtc.prototype.setVideoSource = function (videoSrcId) {
-            // TODO:
-            //    _desiredVideoProperties.videoSrcId = videoSrcId;
-            //    delete _desiredVideoProperties.screenCapture;
+            this._desiredVideoProperties.deviceId = videoSrcId;
         };
         ;
         /**
@@ -805,22 +770,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          * @example easyrtc.setAudioSource( audioSrcId);
          */
         Easyrtc.prototype.setAudioSource = function (audioSrcId) {
-            // TODO:
-            // _desiredAudioProperties.audioSrcId = audioSrcId;
-        };
-        ;
-        /** This function requests that screen capturing be used to provide the local media source
-         * rather than a webcam. If you have multiple screens, they are composited side by side.
-         * Note: this functionality is not supported by Firefox, has to be called before calling initMediaSource (or easyApp), we don't currently supply a way to
-         * turn it off (once it's on), only works if the website is hosted SSL (https), and the image quality is rather
-         * poor going across a network because it tries to transmit so much data. In short, screen sharing
-         * through WebRTC isn't worth using at this point, but it is provided here so people can try it out.
-         * @example
-         *    easyrtc.setScreenCapture();
-         * @deprecated: use easyrtc.initScreenCapture (same parameters as easyrtc.initMediaSource.
-         */
-        Easyrtc.prototype.setScreenCapture = function (enableScreenCapture) {
-            this._desiredVideoProperties.screenCapture = (enableScreenCapture !== false);
+            this._desiredAudioProperties.deviceId = audioSrcId;
         };
         ;
         /** Set the application name. Applications can only communicate with other applications
@@ -831,8 +781,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *    easyrtc.setApplicationName('simpleAudioVideo');
          */
         Easyrtc.prototype.setApplicationName = function (name) {
-            // TODO:
-            //  this.applicationName = name;
+            this.applicationName = name;
         };
         ;
         /** Enable or disable logging to the console.
@@ -869,8 +818,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          * @returns {Boolean} True getUserMedia is supported.
          */
         Easyrtc.prototype.supportsGetUserMedia = function () {
-            // TODO:
-            return true;
+            return MR.supportsGetUserMedia();
         };
         ;
         /**
@@ -878,8 +826,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          * @returns {Boolean} True if Peer connections are supported.
          */
         Easyrtc.prototype.supportsPeerConnections = function () {
-            // TODO:
-            return true;
+            return CCC.supportsPeerConnections();
         };
         ;
         /** Determines whether the current browser supports the new data channels.
@@ -887,8 +834,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          * @returns {Boolean}
          */
         Easyrtc.prototype.supportsDataChannels = function () {
-            // TODO:
-            return true;
+            return CCC.supportsDataChannels();
         };
         ;
         /** @private */
@@ -896,8 +842,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
         // Experimental function to determine if statistics gathering is supported.
         //
         Easyrtc.prototype.supportsStatistics = function () {
-            // TODO;
-            return true;
+            return CCC.supportsStatistics();
         };
         ;
         /**
@@ -934,7 +879,8 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
         //     return peerconns;
         // };
         /**
-         * This function gets the statistics for a particular peer connec           var count = 0;
+         * This function gets the statistics for a particular peer connection.
+         * var count = 0;
          var i;
          for (i in this.peerConns) {
                     if (peerConns.hasOwnProperty(i)) {
@@ -943,7 +889,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
                         }
                     }
                 }
-         return count;tion.
+         return count;
          * @param {String} easyrtcid
          * @param {Function} callback gets the easyrtcid for the peer and a map of {userDefinedKey: value}. If there is no peer connection to easyrtcid, then the map will
          *  have a value of {connected:false}.
@@ -1100,7 +1046,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *    });
          */
         Easyrtc.prototype.setDataChannelOpenListener = function (listener) {
-            // TODO:   this.onDataChannelOpen = listener;
+            this.onDataChannelOpen = listener;
         };
         ;
         /** Sets a callback that is called when a previously open data channel closes.
@@ -1112,7 +1058,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *    });
          */
         Easyrtc.prototype.setDataChannelCloseListener = function (listener) {
-            // TODO:  this.onDataChannelClose = listener;
+            this.onDataChannelClose = listener;
         };
         ;
         /** Returns the number of live peer connections the client has.
@@ -1121,8 +1067,12 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *    ("You have " + easyrtc.getConnectionCount() + " peer connections");
          */
         Easyrtc.prototype.getConnectionCount = function () {
-            // TODO:
-            return 0;
+            if (this.callControl) {
+                return this.callControl.GetCallCount();
+            }
+            else {
+                return 0;
+            }
         };
         ;
         /** Sets the maximum length in bytes of P2P messages that can be sent.
@@ -1131,7 +1081,6 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *     easyrtc.setMaxP2PMessageLength(10000);
          */
         Easyrtc.prototype.setMaxP2PMessageLength = function (maxLength) {
-            // TODO:
             //         this.maxP2PMessageLength = maxLength;
         };
         ;
@@ -1141,7 +1090,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *      easyrtc.enableAudio(false);
          */
         Easyrtc.prototype.enableAudio = function (enabled) {
-            // TODO:         this.audioEnabled = enabled;
+            this.audioEnabled = enabled;
         };
         ;
         /**
@@ -1151,7 +1100,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *      easyrtc.enableVideo(false);
          */
         Easyrtc.prototype.enableVideo = function (enabled) {
-            // TODO        this.videoEnabled = enabled;
+            this.videoEnabled = enabled;
         };
         ;
         /**
@@ -1171,13 +1120,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          * @param {Array} tracks - an array of MediaStreamTrack
          */
         Easyrtc.prototype.enableMediaTracks = function (enable, tracks) {
-            var i;
-            if (tracks) {
-                for (i = 0; i < tracks.length; i++) {
-                    var track = tracks[i];
-                    track.enabled = enable;
-                }
-            }
+            MR.enableMediaTracks(enable, tracks);
         };
         /** @private */
         //
@@ -1195,32 +1138,33 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             }
         };
         /**
-         * Returns the user assigned id's of currently active local media streams.
-         * @return {Array}
-         */
-        //    public getLocalMediaIds = function():string[] {
-        //        return Object.keys(namedLocalMediaStreams);
-        //    };
-        /**
          * Allow an externally created mediastream (ie, created by another
          * library) to be used within easyrtc. Tracking when it closes
          * must be done by the supplying party.
          */
         Easyrtc.prototype.register3rdPartyLocalMediaStream = function (stream, streamName) {
-            // TODO:         return this.registerLocalMediaStreamByName(stream, streamName);
+            this.namedLocalMediaStreams[streamName] = stream;
         };
         ;
-        // public getNameOfRemoteStream(easyrtcId:string, webrtcStream:string):string{
-        //     if(typeof webrtcStream === "string") {
-        //         return getNameOfRemoteStream(easyrtcId, webrtcStream);
-        //     }
-        //     else if( webrtcStream.id) {
-        //         return getNameOfRemoteStream(easyrtcId, webrtcStream.id);
-        //     }
-        //     else {
-        //         return "default"; // this probably won't happen.
-        //     }
-        // };
+        Easyrtc.prototype.getNameOfRemoteStream = function (easyrtcId, webrtcStream) {
+            var streamId;
+            if (typeof (webrtcStream) == "string") {
+                streamId = webrtcStream;
+            }
+            else if (typeof (webrtcStream) == "object" && webrtcStream.hasOwnProperty("id")) {
+                streamId = webrtcStream.id;
+            }
+            else {
+                return "default";
+            }
+            if (!this.peerConns[easyrtcId]) {
+                return null;
+            }
+            else {
+                return this.peerConns[easyrtcId].remoteStreamIdToName[streamId];
+            }
+        };
+        ;
         /**
          * Close the local media stream. You usually need to close the existing media stream
          * of a camera before reacquiring it at a different resolution.
@@ -1230,35 +1174,24 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             var stream = this.getLocalMediaStreamByName(streamName);
             if (stream) {
                 MR.StopStream(stream);
+                delete this.localMediaStreams[streamName];
             }
         };
         ;
         /**
          * This function is used to enable and disable the local camera. If you disable the
-         * camera, video objects display it will "freeze" until the camera is re-enabled. *
+         * camera, video objects which display it will "freeze" until the camera is re-enabled. *
          * By default, a camera is enabled.
          * @param {Boolean} enable - true to enable the camera, false to disable it.
          * @param {String} streamName - the name of the stream, optional.
          */
-        // public enableCamera(enable:boolean, streamName:string):void {
-        //     var stream:MediaStream = getLocalMediaStreamByName(streamName);
-        //     if (stream && stream.getVideoTracks) {
-        //         enableMediaTracks(enable, stream.getVideoTracks());
-        //     }
-        // };
-        /**
-         * This function is used to enable and disable the local microphone. If you disable
-         * the microphone, sounds stops being transmitted to your peers. By default, the microphone
-         * is enabled.
-         * @param {Boolean} enable - true to enable the microphone, false to disable it.
-         * @param {String} streamName - an optional streamName
-         */
-        // public enableMicrophone = function(enable, streamName) {
-        //     var stream = getLocalMediaStreamByName(streamName);
-        //     if (stream && stream.getAudioTracks) {
-        //         enableMediaTracks(enable, stream.getAudioTracks());
-        //     }
-        // };
+        Easyrtc.prototype.enableCamera = function (enable, streamName) {
+            var stream = this.getLocalMediaStreamByName(streamName);
+            if (stream && stream.getVideoTracks) {
+                MR.enableMediaTracks(enable, stream.getVideoTracks());
+            }
+        };
+        ;
         /**
          * Mute a video object.
          * @param {String} videoObjectName - A DOMObject or the id of the DOMObject.
@@ -1290,13 +1223,14 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *  @example
          *      document.getElementById("myVideo").src = easyrtc.getLocalStreamAsUrl();
          */
-        // public getLocalStreamAsUrl(streamName:string):string {
-        //     var stream:MediaStream = getLocalMediaStreamByName(streamName);
-        //     if (stream === null) {
-        //         throw "Developer error: attempt to get a MediaStream without invoking easyrtc.initMediaSource successfully";
-        //     }
-        //     return this.createObjectURL(stream);
-        // };
+        Easyrtc.prototype.getLocalStreamAsUrl = function (streamName) {
+            var stream = this.getLocalMediaStreamByName(streamName);
+            if (stream === null) {
+                throw "Developer error: attempt to get a MediaStream without invoking easyrtc.initMediaSource successfully";
+            }
+            return MR.createObjectURL(stream);
+        };
+        ;
         /**
          * Returns a media stream for your local camera and microphone.
          *  It can be called only after easyrtc.initMediaSource has succeeded.
@@ -1307,7 +1241,6 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *    easyrtc.setVideoObjectSrc( document.getElementById("myVideo"), easyrtc.getLocalStream());
          */
         Easyrtc.prototype.getLocalStream = function (streamName) {
-            streamName = streamName;
             return this.localMediaStreams[streamName || "default"] || null;
         };
         /** Clears the media stream on a video object.
@@ -1349,65 +1282,38 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *             easyrtc.getLocalStream("camera1").getVideoTracks(),
          *             easyrtc.getLocalStream("camera2").getAudioTracks());
          */
-        // public buildLocalMediaStream = function(streamName:string, audioTracks:MediaStreamTrack[], videoTracks:MediaStreamTrack[]):MediaStream {
-        //
-        //      if (typeof streamName !== 'string') {
-        //          this.showError(this.errCodes.DEVELOPER_ERR,
-        //              "easyrtc.buildLocalMediaStream not supplied a stream name");
-        //          return null;
-        //      }
-        //
-        //      var streamToClone:MediaStream = null;
-        //      for(let key in namedLocalMediaStreams ) {
-        //          if( namedLocalMediaStreams.hasOwnProperty(key)) {
-        //              streamToClone = namedLocalMediaStreams[key];
-        //              if(streamToClone) {
-        //                  break;
-        //              }
-        //          }
-        //      }
-        //      if( !streamToClone ) {
-        //          for(let key in peerConns) {
-        //              if (peerConns.hasOwnProperty(key)) {
-        //                  var remoteStreams = peerConns[key].pc.getRemoteStreams();
-        //                  if( remoteStreams && remoteStreams.length > 0 ) {
-        //                      streamToClone = remoteStreams[0];
-        //                  }
-        //              }
-        //          }
-        //      }
-        //      if( !streamToClone ){
-        //          this.showError(this.errCodes.DEVELOPER_ERR,
-        //              "Attempt to create a mediastream without one to clone from");
-        //          return null;
-        //      }
-        //
-        //      //
-        //      // clone whatever mediastream we found, and remove any of it's
-        //      // tracks.
-        //      //
-        //      var mediaClone:MediaStream = streamToClone.clone();
-        //      var oldTracks:MediaStreamTracks[] = mediaClone.getTracks();
-        //
-        //      if (audioTracks) {
-        //          for (let i = 0; i < audioTracks.length; i++) {
-        //              mediaClone.addTrack(audioTracks[i].clone());
-        //          }
-        //      }
-        //
-        //      if (videoTracks) {
-        //          for (let i = 0; i < videoTracks.length; i++) {
-        //              mediaClone.addTrack(videoTracks[i].clone());
-        //          }
-        //      }
-        //
-        //      for(let i = 0; i < oldTracks.length; i++ ) {
-        //          mediaClone.removeTrack(oldTracks[i]);
-        //      }
-        //
-        //      this.registerLocalMediaStreamByName(mediaClone, streamName);
-        //      return mediaClone;
-        //  };
+        Easyrtc.prototype.buildLocalMediaStream = function (streamName, audioTracks, videoTracks) {
+            var template = null;
+            if (window["MediaStream"]) {
+                template = new MediaStream();
+            }
+            if (!template) {
+                for (var someName in this.localMediaStreams) {
+                    template = this.localMediaStreams[someName];
+                    break;
+                }
+            }
+            if (!template) {
+                for (var easyrtcid in this.peerConns) {
+                    for (var callId in this.peerConns[easyrtcid].remoteStreamsPerCallId) {
+                        for (var streamName_1 in this.peerConns[easyrtcid].remoteStreamsPerCallId[callId]) {
+                            template = this.peerConns[easyrtcid].remoteStreamsPerCallId[callId][streamName_1];
+                            break;
+                        }
+                        if (template)
+                            break;
+                    }
+                    if (template)
+                        break;
+                }
+            }
+            if (template) {
+                return MR.buildLocalMediaStream(streamName, audioTracks, videoTracks, template);
+            }
+            else {
+                throw "Developer error: no stream (local or remote) to use as a template for building a new stream";
+            }
+        };
         /* @private*/
         /** Load Easyrtc Stylesheet.
          *   Easyrtc Stylesheet define easyrtcMirror class and some basic css class for using easyrtc.js.
@@ -1476,6 +1382,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
                     this.showError(this.errCodes.MEDIA_ERR, message);
                 };
             }
+            var a;
             if (!successCallback) {
                 this.showError(this.errCodes.DEVELOPER_ERR, "easyrtc.initMediaSource not supplied a successCallback");
                 return;
@@ -1484,134 +1391,28 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             /** @private
              * @param {Object} stream - A mediaStream object.
              *  */
-            var xx = this.localMediaStreams;
+            var self = this;
             function assignStream(m) {
-                xx[streamName] = m;
-                successCallback(m);
+                self.localMediaStreams[streamName] = m;
+                MR.GetResolutionOfMediaStream(m).then(function (videoAttribs) {
+                    self.nativeVideoHeight = videoAttribs.height;
+                    self.nativeVideoWidth = videoAttribs.width;
+                    if (self._desiredVideoProperties && (self._desiredVideoProperties.height &&
+                        (self.nativeVideoHeight !== self._desiredVideoProperties.height ||
+                            self.nativeVideoWidth !== self._desiredVideoProperties.width))) {
+                        self.showError(self.errCodes.MEDIA_WARNING, self.format(self.getConstantString("resolutionWarning"), " " + self._desiredVideoProperties.width, " " + self._desiredVideoProperties.height, " " + self.nativeVideoWidth, " " + self.nativeVideoHeight));
+                    }
+                    successCallback(m);
+                }, function (error) {
+                    self.showError(self.errCodes.MEDIA_WARNING, self.format(self.getConstantString("resolutionWarning"), "" + (self._desiredVideoProperties ? self._desiredVideoProperties.width : 640), "" + (self._desiredVideoProperties ? self._desiredVideoProperties.height : 480), "unavailable", "unavailable"));
+                    successCallback(m);
+                });
             }
             function invokeError(error) {
-                errorCallback(this.errCodes.MEDIA_ERR, this.format(this.getConstantString("gumFailed"), error.message));
+                errorCallback(self.errCodes.MEDIA_ERR, self.format(self.getConstantString("gumFailed"), error.message));
             }
             MR.AllocateMediaStream(this.haveAudioVideo).then(assignStream, invokeError);
         };
-        //     // function onUserMediaSuccess(stream:MediaStream):void {
-        //     //     this.debugOut("getUserMedia success callback entered");
-        //     //     this.debugOut("successfully got local media");
-        //     //
-        //     //     stream.streamName = streamName;
-        //     //     this.registerLocalMediaStreamByName(stream, streamName);
-        //     //     var videoObj, triesLeft, tryToGetSize, ele;
-        //     //     if (this.haveAudioVideo.video) {
-        //     //         videoObj = document.createElement('video');
-        //     //         videoObj.muted = true;
-        //     //         triesLeft = 30;
-        //     //         tryToGetSize = function() {
-        //     //             if (videoObj.videoWidth > 0 || triesLeft < 0) {
-        //     //                 this.nativeVideoWidth = videoObj.videoWidth;
-        //     //                 this.nativeVideoHeight = videoObj.videoHeight;
-        //     //                 if (_desiredVideoProperties.height &&
-        //     //                     (this.nativeVideoHeight !== _desiredVideoProperties.height ||
-        //     //                     this.nativeVideoWidth !== _desiredVideoProperties.width)) {
-        //     //                     this.showError(this.errCodes.MEDIA_WARNING,
-        //     //                         this.format(this.getConstantString("resolutionWarning"),
-        //     //                             _desiredVideoProperties.width, _desiredVideoProperties.height,
-        //     //                             this.nativeVideoWidth, this.nativeVideoHeight));
-        //     //                 }
-        //     //                 this.setVideoObjectSrc(videoObj, null);
-        //     //                 if (videoObj.removeNode) {
-        //     //                     videoObj.removeNode(true);
-        //     //                 }
-        //     //                 else {
-        //     //                     ele = document.createElement('div');
-        //     //                     ele.appendChild(videoObj);
-        //     //                     ele.removeChild(videoObj);
-        //     //                 }
-        //     //
-        //     //                 updateConfigurationInfo();
-        //     //                 if (successCallback) {
-        //     //                     successCallback(stream);
-        //     //                 }
-        //     //             }
-        //     //             else {
-        //     //                 triesLeft -= 1;
-        //     //                 setTimeout(tryToGetSize, 300);
-        //     //             }
-        //     //         };
-        //     //         this.setVideoObjectSrc(videoObj, stream);
-        //     //         tryToGetSize();
-        //     //     }
-        //     //     else {
-        //     //         updateConfigurationInfo();
-        //     //         if (successCallback) {
-        //     //             successCallback(stream);
-        //     //         }
-        //     //     }
-        //     }
-        // /**
-        //  * @private
-        //  * @param {String} error
-        //  */
-        // function onUserMediaError(error:MediaStreamError):void {
-        //     debugOut("getusermedia failed");
-        //     debugOut("failed to get local media");
-        //     var errText:string;
-        //     if (typeof error === 'string') {
-        //         errText = error;
-        //     }
-        //     else if (error.name) {
-        //         errText = error.name;
-        //     }
-        //     else {
-        //         errText = "Unknown";
-        //     }
-        //     if (errorCallback) {
-        //         debugOut("invoking error callback", errText);
-        //         errorCallback(this.errCodes.MEDIA_ERR, this.format(this.getConstantString("gumFailed"), errText));
-        //     }
-        //     this.closeLocalMediaStreamByName(streamName);
-        //     this.haveAudioVideo = {
-        //         audio: false,
-        //         video: false
-        //     };
-        //     this.updateConfigurationInfo();
-        // };
-        // if (!this.audioEnabled && !this.videoEnabled) {
-        //     onUserMediaError(this.getConstantString("requireAudioOrVideo"));
-        //     return;
-        // }
-        //
-        // function getCurrentTime():number {
-        //     return (new Date()).getTime();
-        // }
-        //
-        // var firstCallTime:number;
-        // function tryAgain(err:MediaStreamError):void {
-        //     var currentTime = getCurrentTime();
-        //     if (currentTime < firstCallTime + 1000) {
-        //         this.debugOut("Trying getUserMedia a second time");
-        //         try {
-        //             navigator.getUserMedia(mode, onUserMediaSuccess, onUserMediaError);
-        //         } catch (e) {
-        //             onUserMediaError(err);
-        //         }
-        //     }
-        //     else {
-        //         onUserMediaError(err);
-        //     }
-        // }
-        //
-        // //
-        // // getUserMedia sometimes fails the first time I call it. I suspect it's a page loading
-        // // issue. So I'm going to try adding a 1 second delay to allow things to settle down first.
-        // // In addition, I'm going to try again after 3 seconds.
-        // //
-        // try {
-        //     firstCallTime = getCurrentTime();
-        //     navigator.getUserMedia(mode, onUserMediaSuccess, tryAgain);
-        // } catch (err) {
-        //     tryAgain(err);
-        // }
-        //   }
         /**
          * Sets the callback used to decide whether to accept or reject an incoming call.
          * @param {Function} acceptCheck takes the arguments (callerEasyrtcid, acceptor).
@@ -1689,51 +1490,58 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *
          *
          */
-        //       public setPeerListener(listener:ReceivePeerCallback, msgType:string, source:string):void {
-        //           if (!msgType) {
-        //               receivePeer.cb = listener;
-        //           }
-        //           else {
-        //              if (!this.receivePeer.msgTypes[msgType]) {
-        //                  receivePeer.msgTypes[msgType] = {sources: {}};
-        //               }
-        //               if (!source) {
-        //                   receivePeer.msgTypes[msgType].cb = listener;
-        //               }
-        //               else {
-        //                   receivePeer.msgTypes[msgType].sources[source] = {cb: listener};
-        //               }
-        //           }
-        //       };
+        Easyrtc.prototype.setPeerListener = function (listener, msgType, source) {
+            if (!msgType) {
+                this.receivePeer.cb = listener;
+            }
+            else {
+                if (!this.receivePeer.msgTypes[msgType]) {
+                    this.receivePeer.msgTypes[msgType] = { sources: {}, cb: null };
+                }
+                if (!source) {
+                    this.receivePeer.msgTypes[msgType].cb = listener;
+                }
+                else {
+                    this.receivePeer.msgTypes[msgType].sources[source] = { cb: listener };
+                }
+            }
+        };
         /* This function serves to distribute peer messages to the various peer listeners */
         /** @private
          * @param {String} easyrtcid
          * @param {Object} msg - needs to contain a msgType and a msgData field.
          * @param {Object} targeting
          */
-        // private receivePeerDistribute(easyrtcid:string , msg:PeerMessage, targeting:MessageTargeting) {
-        //     var msgType = msg.msgType;
-        //     var msgData = msg.msgData;
-        //     if (!msgType) {
-        //         this.debugOut("received peer message without msgType", msg);
-        //         return;
-        //     }
-        //
-        //     if (receivePeer.msgTypes[msgType]) {
-        //         if (receivePeer.msgTypes[msgType].sources[easyrtcid] &&
-        //             receivePeer.msgTypes[msgType].sources[easyrtcid].cb) {
-        //             receivePeer.msgTypes[msgType].sources[easyrtcid].cb(easyrtcid, msgType, msgData, targeting);
-        //             return;
-        //         }
-        //         if (receivePeer.msgTypes[msgType].cb) {
-        //             receivePeer.msgTypes[msgType].cb(easyrtcid, msgType, msgData, targeting);
-        //             return;
-        //         }
-        //     }
-        //     if (this.receivePeer.cb) {
-        //         this.receivePeer.cb(easyrtcid, msgType, msgData, targeting);
-        //     }
-        // };
+        Easyrtc.prototype.receivePeerDistribute = function (easyrtcid, msg, targeting) {
+            var msgType = msg.msgType;
+            var msgData = msg.msgData;
+            if (!msgType) {
+                this.debugOut("received peer message without msgType", msg);
+                return;
+            }
+            try {
+                if (this.receivePeer.msgTypes[msgType]) {
+                    if (this.receivePeer.msgTypes[msgType].sources[easyrtcid] &&
+                        this.receivePeer.msgTypes[msgType].sources[easyrtcid].cb) {
+                        this.receivePeer.msgTypes[msgType].sources[easyrtcid].cb(easyrtcid, msgType, msgData, targeting);
+                        return;
+                    }
+                    if (this.receivePeer.msgTypes[msgType].cb) {
+                        this.receivePeer.msgTypes[msgType].cb(easyrtcid, msgType, msgData, targeting);
+                        return;
+                    }
+                }
+                if (this.receivePeer.cb) {
+                    this.receivePeer.cb(easyrtcid, msgType, msgData, targeting);
+                    return;
+                }
+                this.debugOut("No message handler for message ", msg);
+            }
+            catch (error) {
+                this.showError(this.errCodes.DEVELOPER_ERR, "application level message handler died for message " + JSON.stringify(msg));
+            }
+        };
+        ;
         /**
          * Sets a listener for messages from the server.
          * @param {Function} listener has the signature (msgType, msgData, targeting)
@@ -1797,23 +1605,54 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
         };
         ;
         /**
+         * Get an array of easyrtcids that are using a particular username
+         * @param {String} username - the username of interest.
+         * @param {String} room - an optional room name argument limiting results to a particular room.
+         * @returns {Array} an array of {easyrtcid:id, roomName: roomName}.
+         */
+        Easyrtc.prototype.usernameToIds = function (username, room) {
+            var results = [];
+            for (var roomName in this.lastLoggedInList) {
+                if (!this.lastLoggedInList.hasOwnProperty(roomName)) {
+                    continue;
+                }
+                if (room && roomName !== room) {
+                    continue;
+                }
+                for (var id in this.lastLoggedInList[roomName]) {
+                    if (!this.lastLoggedInList[roomName].hasOwnProperty(id)) {
+                        continue;
+                    }
+                    if (this.lastLoggedInList[roomName][id].username === username) {
+                        results.push({
+                            easyrtcid: id,
+                            roomName: roomName
+                        });
+                    }
+                }
+            }
+            return results;
+        };
+        ;
+        /**
          * Returns another peers API field, if it exists.
          * @param {type} roomName
          * @param {type} easyrtcid
          * @param {type} fieldName
          * @returns {Object}  Undefined if the attribute does not exist, its value otherwise.
          */
-        // public getRoomApiField = function(roomName:string, easyrtcid:string, fieldName:string):any {
-        //     if (this.lastLoggedInList[roomName] &&
-        //         lastLoggedInList[roomName][easyrtcid] &&
-        //         lastLoggedInList[roomName][easyrtcid].apiField &&
-        //         lastLoggedInList[roomName][easyrtcid].apiField[fieldName]) {
-        //         return lastLoggedInList[roomName][easyrtcid].apiField[fieldName].fieldValue;
-        //     }
-        //     else {
-        //         return undefined;
-        //     }
-        // };
+        Easyrtc.prototype.getRoomApiField = function (roomName, easyrtcid, fieldName) {
+            if (this.lastLoggedInList[roomName] &&
+                this.lastLoggedInList[roomName][easyrtcid] &&
+                this.lastLoggedInList[roomName][easyrtcid].apiField &&
+                this.lastLoggedInList[roomName][easyrtcid].apiField[fieldName]) {
+                return this.lastLoggedInList[roomName][easyrtcid].apiField[fieldName].fieldValue;
+            }
+            else {
+                return undefined;
+            }
+        };
+        ;
         /**
          * Set the authentication credential if needed.
          * @param {Object} credentialParm - a JSONable object.
@@ -1829,8 +1668,41 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             }
         };
         ;
+        /**
+         * Sets the listener for socket disconnection by external (to the API) reasons.
+         * @param {Function} disconnectListener takes no arguments and is not called as a result of calling easyrtc.disconnect.
+         * @example
+         *    easyrtc.setDisconnectListener(function(){
+         *        easyrtc.showError("SYSTEM-ERROR", "Lost our connection to the socket server");
+         *    });
+         */
         Easyrtc.prototype.setDisconnectListener = function (disconnectListener) {
             this.disconnectListener = disconnectListener;
+        };
+        ;
+        /**
+         * Convert an easyrtcid to a user name. This is useful for labeling buttons and messages
+         * regarding peers.
+         * @param {String} easyrtcid
+         * @return {String} the username associated with the easyrtcid, or the easyrtcid if there is
+         * no associated username.
+         * @example
+         *    console.log(easyrtcid + " is actually " + easyrtc.idToName(easyrtcid));
+         */
+        Easyrtc.prototype.idToName = function (easyrtcid) {
+            return easyrtcid;
+            var roomName;
+            for (roomName in this.lastLoggedInList) {
+                if (!this.lastLoggedInList.hasOwnProperty(roomName)) {
+                    continue;
+                }
+                if (this.lastLoggedInList[roomName][easyrtcid]) {
+                    if (this.lastLoggedInList[roomName][easyrtcid].username) {
+                        return this.lastLoggedInList[roomName][easyrtcid].username;
+                    }
+                }
+            }
+            return easyrtcid;
         };
         ;
         /* used in easyrtc.connect */
@@ -1845,7 +1717,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          * @param {Boolean} value the default is false.
          */
         Easyrtc.prototype.setUseFreshIceEachPeerConnection = function (value) {
-            console.warn("On enterprise, you always get fresh ice with a peer connection.");
+            this.debugOut("On enterprise, you always get fresh ice with a peer connection.");
         };
         /**
          * Returns the last ice config supplied by the EasyRTC server. This function is not normally used, it is provided
@@ -1853,7 +1725,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          * @return {Object} which has the form {iceServers:[ice_server_entry, ice_server_entry, ...]}
          */
         Easyrtc.prototype.getServerIce = function () {
-            console.warn("On enterprise, not relevant.");
+            this.debugOut("On enterprise, not supported.");
             return { iceServers: [] };
         };
         ;
@@ -1876,7 +1748,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *      easyrtc.call(...);
          */
         Easyrtc.prototype.setIceUsedInCalls = function (ice) {
-            console.warn("On enterprise, not supported yet.");
+            this.debugOut("On enterprise, not supported yet.");
         };
         ;
         /**
@@ -1920,6 +1792,36 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             }
             return tracks.length > 0;
         };
+        /** Determines if a particular peer2peer connection has an audio track.
+         * @param {String} easyrtcid - the id of the other caller in the connection. If easyrtcid is not supplied, checks the local media.
+         * @param {String} streamName - an optional stream id.
+         * @return {Boolean} true if there is an audio track or the browser can't tell us.
+         */
+        Easyrtc.prototype.haveAudioTrack = function (easyrtcid, streamName) {
+            return this.haveTracks(easyrtcid, true, streamName);
+        };
+        ;
+        /** Determines if a particular peer2peer connection has a video track.
+         * @param {String} easyrtcid - the id of the other caller in the connection. If easyrtcid is not supplied, checks the local media.
+         * @param {String} streamName - an optional stream id.     *
+         * @return {Boolean} true if there is an video track or the browser can't tell us.
+         */
+        Easyrtc.prototype.haveVideoTrack = function (easyrtcid, streamName) {
+            return this.haveTracks(easyrtcid, false, streamName);
+        };
+        ;
+        /**
+         * Gets a data field associated with a room.
+         * @param {String} roomName - the name of the room.
+         * @param {String} fieldName - the name of the field.
+         * @return {Object} dataValue - the value of the field if present, undefined if not present.
+         */
+        Easyrtc.prototype.getRoomField = function (roomName, fieldName) {
+            return this.roomControl.getRoomField(roomName, fieldName);
+        };
+        ;
+        /** @private */
+        // fields:{[key:string]:any};
         //
         // easyrtc.disconnect performs a clean disconnection of the client from the server.
         //
@@ -1974,34 +1876,33 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *     easyrtc.sendDataP2P(someEasyrtcid, "roomData", {room:499, bldgNum:'asd'});
          */
         Easyrtc.prototype.sendDataP2P = function (destUser, msgType, msgData) {
-            // var flattenedData = JSON.stringify({msgType: msgType, msgData: msgData});
-            // debugOut("sending p2p message to " + destUser + " with data=" + JSON.stringify(flattenedData));
-            //
-            // if (!peerConns[destUser]) {
-            //     this.showError(this.errCodes.DEVELOPER_ERR, "Attempt to send data peer to peer without a connection to " + destUser + ' first.');
-            //     return;
-            // }
-            //
-            // let remoteStreamsPerCallId:string[] = Object.keys(peerConns[destuser].remoteStreamsPerCallId);
-            // for(let i:number = 0; i < remoteStreamsPerCallId.length; i++) {
-            //     let callId = remoteStreamsPerCallId[i];
-            //     if (this.callControl.haveOpenDataChannel(callId)) {
-            //         try {
-            //             if (flattenedData.length > this.maxP2PMessageLength) {
-            //                 sendByChunkHelper(callId, flattenedData);
-            //             } else {
-            //                 this.callControl.sendDataChannelMessage(callId, flattenedData);
-            //             }
-            //         } catch (sendDataErr) {
-            //             debugOut("sendDataP2P error: ", sendDataErr);
-            //             throw sendDataErr;
-            //         }
-            //         return;
-            //     }
-            // }
-            // this.showError(this.errCodes.DEVELOPER_ERR, "Attempt to send data peer to peer without establishing a data channel to " + destUser + ' first.');
+            var outgoingMessage = {
+                msgData: msgData,
+                msgType: msgType,
+                senderEasyrtcid: this.myEasyrtcid
+            };
+            var flattenedData = JSON.stringify(outgoingMessage);
+            this.debugOut("sending p2p message to " + destUser + " with data=" + JSON.stringify(flattenedData));
+            if (!this.peerConns[destUser]) {
+                this.showError(this.errCodes.DEVELOPER_ERR, "Attempt to send data peer to peer without a connection to " + destUser + ' first.');
+                return;
+            }
+            var callCandidates = Object.keys(this.peerConns[destUser].remoteStreamsPerCallId);
+            for (var i = 0; i < callCandidates.length; i++) {
+                var callId = callCandidates[i];
+                if (this.callControl.haveOpenDataChannel(callId)) {
+                    try {
+                        this.callControl.sendDataChannelText(callId, flattenedData);
+                    }
+                    catch (sendDataErr) {
+                        this.debugOut("sendDataP2P error: ", sendDataErr);
+                        throw sendDataErr;
+                    }
+                    return;
+                }
+            }
+            this.showError(this.errCodes.DEVELOPER_ERR, "Attempt to send data peer to peer without establishing a data channel to " + destUser + ' first.');
         };
-        ;
         /** Sends data to another user using websockets. The easyrtc.sendServerMessage or easyrtc.sendPeerMessage methods
          * are wrappers for this method; application code should use them instead.
          * @param {String} destination - either a string containing the easyrtcId of the other user, or an object containing some subset of the following fields: targetEasyrtcid, targetGroup, targetRoom.
@@ -2020,46 +1921,39 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *    );
          */
         Easyrtc.prototype.sendDataWS = function (destination, msgType, msgData, ackhandler) {
-            // debugOut("sending client message via websockets to " + JSON.stringify(destination) + " with data=" + JSON.stringify(msgData));
-            //
-            // if (!ackhandler) {
-            //     ackhandler = function(msg:BasicMessage):void {
-            //         if (msg.msgType === "error") {
-            //             this.showError(msg.msgData.errorCode, msg.msgData.errorText);
-            //         }
-            //     };
-            // }
-            //
-            // var outgoingMessage = {
-            //     msgType: msgType,
-            //     msgData: msgData
-            // };
-            //
-            // if (destination) {
-            //     if (typeof destination === 'string') {
-            //         outgoingMessage.targetEasyrtcid = destination;
-            //     }
-            //     else if (typeof destination === 'object') {
-            //         if (destination.targetEasyrtcid) {
-            //             outgoingMessage.targetEasyrtcid = destination.targetEasyrtcid;
-            //         }
-            //         if (destination.targetRoom) {
-            //             outgoingMessage.targetRoom = destination.targetRoom;
-            //         }
-            //         if (destination.targetGroup) {
-            //             outgoingMessage.targetGroup = destination.targetGroup;
-            //         }
-            //     }
-            // }
-            //
-            // if (this.webSocket) {
-            //     this.webSocket.json.emit("easyrtcMsg", outgoingMessage, ackhandler);
-            // }
-            // else {
-            //     debugOut("websocket failed because no connection to server");
-            //
-            //     throw "Attempt to send message without a valid connection to the server.";
-            // }
+            this.debugOut("sending client message via websockets to " + JSON.stringify(destination) + " with data=" + JSON.stringify(msgData));
+            if (!ackhandler) {
+                var ackhandler_1 = function (msg) {
+                    if (msg.msgType === "error") {
+                        this.showError(msg.msgData.errorCode, msg.msgData.errorText);
+                    }
+                };
+            }
+            var outgoingMessage = {
+                senderEasyrtcid: this.myEasyrtcid,
+                msgType: msgType,
+                msgData: msgData
+            };
+            if (destination) {
+                if (typeof destination === 'string') {
+                    outgoingMessage.targetEasyrtcid = destination;
+                }
+                else if (typeof destination === 'object') {
+                    if (destination.targetEasyrtcid) {
+                        outgoingMessage.targetEasyrtcid = destination.targetEasyrtcid;
+                    }
+                    if (destination.targetRoom) {
+                        outgoingMessage.targetRoom = destination.targetRoom;
+                    }
+                }
+            }
+            if (this.roomControl) {
+                this.roomControl.sendPeerMessage(outgoingMessage, ackhandler);
+            }
+            else {
+                this.debugOut("websocket failed because no connection to server");
+                throw "Attempt to send message without a valid connection to the server.";
+            }
         };
         ;
         /** Sends data to another user. This method uses data channels if one has been set up, or websockets otherwise.
@@ -2212,21 +2106,34 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          *                  function(){ console.log("failure"); });
          *     }
          */
-        // public getConnectStatus(otherUser:string):string {
-        //     if (!peerConns.hasOwnProperty(otherUser)) {
-        //         return this.NOT_CONNECTED;
-        //     }
-        //     var peer = peerConns[otherUser];
-        //     if ((peer.sharingAudio || peer.sharingVideo) && !peer.startedAV) {
-        //         return this.BECOMING_CONNECTED;
-        //     }
-        //     else if (peer.sharingData && !peer.dataChannelReady) {
-        //         return this.BECOMING_CONNECTED;
-        //     }
-        //     else {
-        //         return this.IS_CONNECTED;
-        //     }
-        // };
+        Easyrtc.prototype.getConnectStatus = function (otherUser) {
+            if (!this.peerConns.hasOwnProperty(otherUser)) {
+                return this.NOT_CONNECTED;
+            }
+            var peer = this.peerConns[otherUser];
+            var bestState = this.NOT_CONNECTED;
+            for (var callId in peer.remoteStreamsPerCallId) {
+                var callConnectState = this.callControl.getIceState(callId);
+                var collapsedState = this.NOT_CONNECTED;
+                switch (callConnectState) {
+                    case "new":
+                    case "checking":
+                        collapsedState = this.BECOMING_CONNECTED;
+                        break;
+                    case "connected":
+                    case "completed":
+                        collapsedState = this.IS_CONNECTED;
+                }
+                if (bestState == this.NOT_CONNECTED) {
+                    bestState = collapsedState;
+                }
+                else if (bestState == this.BECOMING_CONNECTED && collapsedState == this.IS_CONNECTED) {
+                    bestState = this.IS_CONNECTED;
+                }
+            }
+            return bestState;
+        };
+        ;
         /** @private */
         //
         // This function calls the users onStreamClosed handler, passing it the easyrtcid of the peer, the stream itself,
@@ -2307,14 +2214,6 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             s += priority & 0xFF;
             return s;
         };
-        Easyrtc.prototype.getNameOfRemoteStream = function (easyrtcId, streamId) {
-            if (!this.peerConns[easyrtcId]) {
-                return null;
-            }
-            else {
-                return this.peerConns[easyrtcId].remoteStreamIdToName[streamId];
-            }
-        };
         Easyrtc.prototype.processAddedStream = function (peerConn, otherUser, theStream) {
         };
         Easyrtc.prototype.callIdToEasyrtcId = function (callId) {
@@ -2326,9 +2225,12 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             }
             return null;
         };
-        Easyrtc.prototype.IceConnectionStateHandler = function (callId, iceConnectionState) {
+        Easyrtc.prototype.IceConnectionStateHandler = function (callId, event, iceConnectionState) {
             var otherUser = this.callIdToEasyrtcId(callId);
             if (otherUser) {
+                if (this.iceConnectionStateChangeListener) {
+                    this.iceConnectionStateChangeListener(otherUser, event);
+                }
                 switch (iceConnectionState) {
                     case "connected":
                         if (this.peerConns[otherUser] && this.peerConns[otherUser].callSuccessCB) {
@@ -2374,7 +2276,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             this.peerConns[otherUser].callSuccessCB = callSuccessCB;
             this.peerConns[otherUser].callFailureCB = callFailureCB;
         };
-        Easyrtc.prototype.handleCallIdStart = function (callId, peerId) {
+        Easyrtc.prototype.handleCallIdStart = function (callId, peerId, callConstraints) {
             var self = this;
             function success(easyrtcId, mediaType) {
                 self.debugOut("Saw success in building peer connection");
@@ -2384,6 +2286,9 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             }
             if (!this.peerConns[peerId]) {
                 this.buildPeerConnection(peerId, false, success, failure);
+                this.peerConns[peerId].sharingData = callConstraints.mediaConstraints.dataChannelEnabled;
+                this.peerConns[peerId].sharingAudio = callConstraints.mediaConstraints.mediaEnabled;
+                this.peerConns[peerId].sharingVideo = callConstraints.mediaConstraints.mediaEnabled;
             }
             if (!this.peerConns[peerId].remoteStreamsPerCallId[callId]) {
                 this.peerConns[peerId].remoteStreamsPerCallId[callId] = [];
@@ -2517,6 +2422,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
         Easyrtc.prototype.callBody = function (otherUser, callSuccessCB, callFailureCB, wasAcceptedCB, offeringStream, callIndex) {
             var callConstraints = CCC.CallConstraints.newInstance();
             callConstraints.networkConstraints.offeringPeerId = this.myEasyrtcid;
+            callConstraints.mediaConstraints.dataChannelEnabled = this.dataEnabled;
             callConstraints.networkConstraints.answeringPeerId = otherUser;
             var requestingLabel = (callIndex == 0 && (this.receiveAudioEnabled || this.receiveVideoEnabled)) ? "default" : null;
             var self = this;
@@ -3067,30 +2973,54 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
                 }
             }
         };
+        /**
+         * This is the data channel text helper.
+         * @param callId
+         * @param message
+         */
+        Easyrtc.prototype.distributeTextMessageByCallId = function (callId, message) {
+            var easyrtcId = this.callIdToEasyrtcId(callId);
+            if (!easyrtcId) {
+                this.debugOut("Warning: peer message received from callId with no easyrtcid ", callId, message);
+                return; // this shouldn't be possible
+            }
+            try {
+                var jsonmessage = JSON.parse(message);
+                try {
+                    this.receivePeerDistribute(easyrtcId, jsonmessage);
+                }
+                catch (applicationError) {
+                    this.showError(this.errCodes.DEVELOPER_ERR, "application callback failed with incoming message " + JSON.stringify(jsonmessage));
+                    this.debugOut("application error:", applicationError);
+                }
+            }
+            catch (badjsonerror) {
+                this.showError(this.errCodes.DEVELOPER_ERR, "Received peer message that wasn't json format: " + message);
+            }
+        };
         /** Get server defined fields associated with a particular room. Only valid
-             * after a connection has been made.
-             * @param {String} roomName - the name of the room you want the fields for.
-             * @returns {Object} A dictionary containing entries of the form {key:{'fieldName':key, 'fieldValue':value1}} or undefined
-             * if you are not connected to the room.
-             */
-        // public getRoomFields(roomName:string) {
-        //     return (!fields || !fields.rooms || !fields.rooms[roomName]) ?
-        //         undefined : fields.rooms[roomName];
-        // }
+         * after a connection has been made.
+         * @param {String} roomName - the name of the room you want the fields for.
+         * @returns {Object} A dictionary containing entries of the form {key:{'fieldName':key, 'fieldValue':value1}} or undefined
+         * if you are not connected to the room.
+         */
+        Easyrtc.prototype.getRoomFields = function (roomName) {
+            this.roomControl.getRoomFields(roomName);
+        };
         /** Get server defined fields associated with the current application. Only valid
          * after a connection has been made.
          * @returns {Object} A dictionary containing entries of the form {key:{'fieldName':key, 'fieldValue':value1}}
          */
-        // public getApplicationFields():any {
-        //     return fields.application;
-        // }
+        Easyrtc.prototype.getApplicationFields = function () {
+            throw "getapplicationFields not supported yet";
+        };
         /** Get server defined fields associated with the connection. Only valid
          * after a connection has been made.
          * @returns {Object} A dictionary containing entries of the form {key:{'fieldName':key, 'fieldValue':value1}}
          */
-        // public getConnectionFields():any {
-        //     return fields.connection;
-        // }
+        Easyrtc.prototype.getConnectionFields = function () {
+            throw "getConnectionFields not supported yet";
+        };
         /**
          * Supply a socket.io connection that will be used instead of allocating a new socket.
          * The expected usage is that you allocate a websocket, assign options to it, call
@@ -3099,29 +3029,8 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          * @param {Object} alreadyAllocatedSocketIo A value allocated with the connect method of socket.io.
          */
         Easyrtc.prototype.useThisSocketConnection = function (alreadyAllocatedSocketIo) {
-            console.error("useThisSocketConnection not currently supported in Enterprise");
+            throw "useThisSocketConnection not currently supported in Enterprise";
         };
-        /**
-         * Connects to the EasyRTC signaling server. You must connect before trying to
-         * call other users.
-         * @param {String} applicationName is a string that identifies the application so that different applications can have different
-         *        lists of users. Note that the server configuration specifies a regular expression that is used to check application names
-         *        for validity. The default pattern is that of an identifier, spaces are not allowed.
-         * @param {Function} successCallback (easyrtcId, roomOwner) - is called on successful connect. easyrtcId is the
-         *   unique name that the client is known to the server by. A client usually only needs it's own easyrtcId for debugging purposes.
-         *       roomOwner is true if the user is the owner of a room. It's value is random if the user is in multiple rooms.
-         * @param {Function} errorCallback (errorCode, errorText) - is called on unsuccessful connect. if null, an alert is called instead.
-         *  The errorCode takes it's value from easyrtc.errCodes.
-         * @example
-         *   easyrtc.connect("my_chat_app",
-         *                   function(easyrtcid, roomOwner){
-         *                       if( roomOwner){ console.log("I'm the room owner"); }
-         *                       console.log("my id is " + easyrtcid);
-         *                   },
-         *                   function(errorText){
-         *                       console.log("failed to connect ", erFrText);
-         *                   });
-         */
         Easyrtc.prototype.roomControlHandlerBuilder = function () {
             var self = this;
             /**
@@ -3157,6 +3066,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
                         peerData[peerIn] = {};
                     }
                 }
+                self.lastLoggedInList[roomName] = peerData;
                 if (self.roomOccupantListener) {
                     self.roomOccupantListener(roomName, peerData, false);
                 }
@@ -3211,13 +3121,14 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
                 dataChannelError: function (callId, message) {
                 },
                 onDataChannelTextMessage: function (callId, message) {
+                    self.distributeTextMessageByCallId(callId, message);
                 },
                 onDataChannelBinaryMessage: function (callId, message) {
                 },
                 onCallError: function (callId, errorText) {
                 },
-                onIceChange: function (callId, iceState) {
-                    self.IceConnectionStateHandler(callId, iceState);
+                onIceChange: function (callId, event, iceState) {
+                    self.IceConnectionStateHandler(callId, event, iceState);
                 },
                 onStreamAdded: function (callId, stream) {
                     self.onAddStreamHelper(callId, stream);
@@ -3226,8 +3137,8 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
                     self.debugOut("saw remove on remote media stream");
                     self.onRemoveStreamHelper(callId, stream);
                 },
-                onCallStart: function (callId, peerId) {
-                    self.handleCallIdStart(callId, peerId);
+                onCallStart: function (callId, peerId, callConstraints) {
+                    self.handleCallIdStart(callId, peerId, callConstraints);
                 },
                 onCallFailed: function (callId) {
                     self.handleCallIdFailed(callId);
@@ -3242,6 +3153,27 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             return result;
         };
         ;
+        /**
+         * Connects to the EasyRTC signaling server. You must connect before trying to
+         * call other users.
+         * @param {String} applicationName is a string that identifies the application so that different applications can have different
+         *        lists of users. Note that the server configuration specifies a regular expression that is used to check application names
+         *        for validity. The default pattern is that of an identifier, spaces are not allowed.
+         * @param {Function} successCallback (easyrtcId, roomOwner) - is called on successful connect. easyrtcId is the
+         *   unique name that the client is known to the server by. A client usually only needs it's own easyrtcId for debugging purposes.
+         *       roomOwner is true if the user is the owner of a room. It's value is random if the user is in multiple rooms.
+         * @param {Function} errorCallback (errorCode, errorText) - is called on unsuccessful connect. if null, an alert is called instead.
+         *  The errorCode takes it's value from easyrtc.errCodes.
+         * @example
+         *   easyrtc.connect("my_chat_app",
+         *                   function(easyrtcid, roomOwner){
+         *                       if( roomOwner){ console.log("I'm the room owner"); }
+         *                       console.log("my id is " + easyrtcid);
+         *                   },
+         *                   function(errorText){
+         *                       console.log("failed to connect ", erFrText);
+         *                   });
+         */
         Easyrtc.prototype.connect = function (applicationName, successCallback, errorCallback) {
             var _this = this;
             if (this.transportBuilder) {
@@ -3250,11 +3182,6 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
                     return;
                 }
             }
-            this.fields = {
-                rooms: {},
-                application: {},
-                connection: {}
-            };
             this.debugOut("attempt to connect to WebRTC signalling server with application name=" + applicationName);
             if (errorCallback === null) {
                 errorCallback = function (errorCode, errorText) {

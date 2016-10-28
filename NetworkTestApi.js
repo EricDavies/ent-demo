@@ -238,7 +238,7 @@ define(["require", "exports", "./MQTTTransport", "./callControlClient", "./Media
                     for (var i = 0; i < _this.numberMessagesToSend; i++) {
                         // we may need to add some scope field and make this json to work with the headless client.
                         _this.dataChannelPingSendTimes.push(window.performance.now());
-                        _this.callControl.sendDataChannelMessage(callId, "This is a test message ");
+                        _this.callControl.sendDataChannelText(callId, "This is a test message ");
                         _this.testResult.dataChannelMessagesSent++;
                     }
                 },

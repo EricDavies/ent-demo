@@ -87,6 +87,11 @@ define(["require", "exports"], function (require, exports) {
     }());
     exports.CallConstraints = CallConstraints;
     ;
+    var MultipacketTransfer = (function () {
+        function MultipacketTransfer() {
+        }
+        return MultipacketTransfer;
+    }());
     /**
      * This class stores per call information for the call control client. It doesn't get exposed to applications.
      */
@@ -102,6 +107,56 @@ define(["require", "exports"], function (require, exports) {
         return SessionInfo;
     }());
     ;
+    /**
+     * Determines if the local browser supports WebRTC Peer connections to the extent of being able to do video chats.
+     * @returns {Boolean} True if Peer connections are supported.
+     */
+    function supportsPeerConnections() {
+        try {
+            var peer = new RTCPeerConnection({ iceServers: [] });
+            peer.close();
+            return true;
+        }
+        catch (exception) {
+            return false;
+        }
+    }
+    exports.supportsPeerConnections = supportsPeerConnections;
+    ;
+    /** Determines whether the current browser supports the new data channels.
+     * EasyRTC will not open up connections with the old data channels.
+     * @returns {Boolean}
+     */
+    function supportsDataChannels() {
+        try {
+            var peer = new RTCPeerConnection({ iceServers: [] });
+            var result = !!peer.createDataChannel;
+            peer.close();
+            return result;
+        }
+        catch (exception) {
+            return false;
+        }
+    }
+    exports.supportsDataChannels = supportsDataChannels;
+    ;
+    /** @private */
+    //
+    // Experimental function to determine if statistics gathering is supported.
+    //
+    function supportsStatistics() {
+        try {
+            var peer = new RTCPeerConnection({ iceServers: [] });
+            var result = !!peer.getStats;
+            peer.close();
+            return result;
+        }
+        catch (exception) {
+            return false;
+        }
+    }
+    exports.supportsStatistics = supportsStatistics;
+    ;
     var CallControlClient = (function () {
         function CallControlClient(sender, applicationEventHandler) {
             this.activeSessions = {};
@@ -110,10 +165,15 @@ define(["require", "exports"], function (require, exports) {
             this.sdpRemoteFilter = null;
             this.sdpLocalFilter = null;
             this.customIceFilter = null;
+            this.maxP2PLength = 12000; // the true maximum is around 16kbytes but we may see padding
+            this.transferId = 0;
             this.sender = sender; // redundant statement, but won't hurt.
             this.applicationEventHandler = applicationEventHandler;
             sender.setListener(this);
         }
+        CallControlClient.prototype.GetCallCount = function () {
+            return Object.keys(this.activeSessions).length;
+        };
         CallControlClient.prototype.SetCustomIceFilter = function (filter) {
             this.customIceFilter = filter;
         };
@@ -128,6 +188,19 @@ define(["require", "exports"], function (require, exports) {
         //
         CallControlClient.prototype.SetSdpRemoteFilter = function (filter) {
             this.sdpRemoteFilter = filter;
+        };
+        /**
+         * Gets the current ice state of a connection.
+         * @param callId
+         * @returns {string} null if callId is not a known call.
+         */
+        CallControlClient.prototype.getIceState = function (callId) {
+            if (this.activeSessions[callId]) {
+                return this.activeSessions[callId].iceState;
+            }
+            else {
+                return null;
+            }
         };
         /** Called when a successful connection is lost, ie, after onConnectionSuccess succeeds
          * @param errorMessage A humanly readable message explaining why the connection was lost.
@@ -336,7 +409,7 @@ define(["require", "exports"], function (require, exports) {
             };
             currentSession.call.createOffer(setLocalAndSendMessage0, function (errorObj) {
                 currentSession.iceState = "failed";
-                this.applicationEventHandler.onIceChange(currentSession.callId, currentSession.iceState);
+                this.applicationEventHandler.onIceChange(currentSession.callId, null, currentSession.iceState);
                 this.applicationEventHandler.onCallFailed(currentSession.callId);
             }, receiveConstraints);
         };
@@ -394,7 +467,7 @@ define(["require", "exports"], function (require, exports) {
             currentSession.call.createAnswer(receiveConstraints).then(setLocalAndSendMessage0, function (error) {
                 console.log("create answer failed with ", error, error.message);
                 currentSession.iceState = "failed";
-                self.applicationEventHandler.onIceChange(currentSession.callId, currentSession.iceState);
+                self.applicationEventHandler.onIceChange(currentSession.callId, null, currentSession.iceState);
                 self.applicationEventHandler.onCallFailed(currentSession.callId);
             });
         };
@@ -479,7 +552,52 @@ define(["require", "exports"], function (require, exports) {
             };
             sessionInfo.dataChannel.onmessage = function (event) {
                 if (typeof event.data == "string") {
-                    _this.applicationEventHandler.onDataChannelTextMessage(sessionInfo.callId, event.data);
+                    var packet = event.data;
+                    var prefix = packet.substr(0, 1);
+                    switch (prefix) {
+                        case '+':
+                            var header = JSON.parse(packet.substr(1));
+                            sessionInfo.multipacketTransfers[header.id] = {
+                                collectedData: "",
+                                numExpected: header.nchunks,
+                                numReceived: 0
+                            };
+                            break;
+                        case '-':
+                            var trailer = JSON.parse(packet.substr(1));
+                            if (sessionInfo.multipacketTransfers[trailer.id]) {
+                                if (sessionInfo.multipacketTransfers[trailer.id].numExpected ==
+                                    sessionInfo.multipacketTransfers[trailer.id].numReceived) {
+                                    _this.applicationEventHandler.onDataChannelTextMessage(sessionInfo.callId, sessionInfo.multipacketTransfers[trailer.id].collectedData);
+                                }
+                                else {
+                                    if (window.console) {
+                                        console.error("Saw incomplete or unordered large message sent over data channels");
+                                    }
+                                }
+                                delete sessionInfo.multipacketTransfers[trailer.id];
+                            }
+                            break;
+                        case ',':
+                            var headerLength = packet.indexOf("}");
+                            var chunkHeader = JSON.parse(packet.substr(1, headerLength));
+                            var chunkData = packet.substr(headerLength + 1);
+                            if (sessionInfo.multipacketTransfers[chunkHeader.id]) {
+                                if (sessionInfo.multipacketTransfers[chunkHeader.id].numReceived != chunkHeader.i) {
+                                    console.error("Saw incomplete or unordered large message sent over data channels");
+                                }
+                                else {
+                                    sessionInfo.multipacketTransfers[chunkHeader.id].collectedData += chunkData;
+                                    sessionInfo.multipacketTransfers[chunkHeader.id].numReceived++;
+                                }
+                            }
+                            break;
+                        case ':':
+                            _this.applicationEventHandler.onDataChannelTextMessage(sessionInfo.callId, packet.substr(1));
+                            break;
+                        default:
+                            _this.applicationEventHandler.onDataChannelTextMessage(sessionInfo.callId, packet);
+                    }
                 }
                 else {
                     _this.applicationEventHandler.onDataChannelBinaryMessage(sessionInfo.callId, event.data);
@@ -588,7 +706,7 @@ define(["require", "exports"], function (require, exports) {
                 if (self.loggingEnabled) {
                     console.log(getTimeString(), " new state is " + activeSession.iceState);
                 }
-                _this.applicationEventHandler.onIceChange(activeSession.callId, activeSession.iceState);
+                _this.applicationEventHandler.onIceChange(activeSession.callId, event, activeSession.iceState);
                 if (activeSession.iceState === "failed") {
                     self.applicationEventHandler.onCallFailed(activeSession.callId);
                 }
@@ -703,7 +821,7 @@ define(["require", "exports"], function (require, exports) {
             else {
                 this.sender.sendAck(id);
             }
-            this.applicationEventHandler.onCallStart(newSession.callId, newSession.iAmCaller ? newSession.constraints.networkConstraints.answeringPeerId : newSession.constraints.networkConstraints.offeringPeerId);
+            this.applicationEventHandler.onCallStart(newSession.callId, newSession.iAmCaller ? newSession.constraints.networkConstraints.answeringPeerId : newSession.constraints.networkConstraints.offeringPeerId, newSession.constraints);
         };
         CallControlClient.prototype.requestCallOfferSdp = function (id, params) {
             var _this = this;
@@ -1018,12 +1136,51 @@ define(["require", "exports"], function (require, exports) {
                 return false;
             return this.activeSessions[callId].dataChannelIsOpen;
         };
-        CallControlClient.prototype.sendDataChannelMessage = function (callId, data) {
+        CallControlClient.prototype.sendDataChannelText = function (callId, data) {
             if (!this.activeSessions[callId]) {
                 return;
             }
             var activeSession = this.activeSessions[callId];
-            activeSession.dataChannel.send(data);
+            //
+            // salient differences between this code and Harold's.
+            //  1) this code inserts a single character prefix that tells the receiving side whether
+            //     this is a single packet message (prefix=':')
+            //     this is the start of a multipacket message (prefix='+')
+            //     this is part of the data of a multipacket message (prefix=',')
+            //     this is the end of a multipart message (prefix='-')
+            //  Use of the prefix means that a malicious sender can't send a single packet message that looks like a part of a
+            //  multipacket message and have it confuse things. You can send anything in the string you want, safely.
+            //  2) in the case of a multipacket message, this code doesn't cause the packet's data to be
+            //      re-escaped, only a header for the chunk is converted to text. This means string lengths won't expand as
+            //      much as with Harolds code.
+            //  3) The character position is sent along to aid in reconstruction in case somebody tries to use unordered
+            //      data channels
+            // The same strategy can be used with binary messages of course.
+            //
+            if (data.length > this.maxP2PLength) {
+                this.transferId++;
+                var numberOfChunks = Math.ceil(data.length / this.maxP2PLength);
+                var startMessage = {
+                    id: this.transferId,
+                    nchunks: numberOfChunks
+                };
+                activeSession.dataChannel.send("+" + JSON.stringify(startMessage));
+                var i = 0;
+                for (var pos = 0, len = data.length; pos < len; pos += this.maxP2PLength) {
+                    var chunkHeader = {
+                        i: i++,
+                        id: this.transferId
+                    };
+                    activeSession.dataChannel.send("," + JSON.stringify(chunkHeader) + data.substr(pos, this.maxP2PLength));
+                }
+                var endMessage = {
+                    id: this.transferId
+                };
+                activeSession.dataChannel.send("-" + JSON.stringify(endMessage));
+            }
+            else {
+                activeSession.dataChannel.send(":" + data); // : denotes that the string is the entire text
+            }
         };
         /**
          * This produces raw stats as provided by webrtc, with no filtering.

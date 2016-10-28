@@ -261,7 +261,7 @@ define(["require", "exports"], function (require, exports) {
             lastWill.destinationName = this.STATUS_TOPIC;
             var options = {
                 timeout: 3,
-                useSSL: (window.location.protocol === "https:"),
+                useSSL: true,
                 cleanSession: false,
                 willMessage: lastWill,
                 onSuccess: function () {

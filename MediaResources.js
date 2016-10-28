@@ -189,6 +189,7 @@ define(["require", "exports"], function (require, exports) {
             throw errMessage;
         }
     }
+    exports.createObjectURL = createObjectURL;
     ;
     function ClearMediaStream(element) {
         var t = element;
@@ -279,4 +280,113 @@ define(["require", "exports"], function (require, exports) {
         }
     }
     exports.isStreamActive = isStreamActive;
+    /**
+     * @private
+     * @param {Boolean} enable
+     * @param {Array} tracks - an array of MediaStreamTrack
+     */
+    function enableMediaTracks(enable, tracks) {
+        var i;
+        if (tracks) {
+            for (i = 0; i < tracks.length; i++) {
+                var track = tracks[i];
+                track.enabled = enable;
+            }
+        }
+    }
+    exports.enableMediaTracks = enableMediaTracks;
+    /**
+     * This function builds a new named local media stream from a set of existing audio and video tracks from other media streams.
+     * @param {String} streamName is the name of the new media stream.
+     * @param {Array} audioTracks is an array of MediaStreamTracks
+     * @param {Array} videoTracks is an array of MediaStreamTracks
+     * @param {MediaStream} a mediastream that we can clone from. Chrome doesn't
+     * @returns {?MediaStream} the track created.
+     * @example
+     *    easyrtc.buildLocalMediaStream("myComposedStream",
+     *             easyrtc.getLocalStream("camera1").getVideoTracks(),
+     *             easyrtc.getLocalStream("camera2").getAudioTracks());
+     */
+    function buildLocalMediaStream(streamName, audioTracks, videoTracks, template) {
+        if (typeof streamName !== 'string') {
+            this.showError(this.errCodes.DEVELOPER_ERR, "easyrtc.buildLocalMediaStream not supplied a stream name");
+            return null;
+        }
+        //
+        // clone whatever mediastream we found, and remove any of it's
+        // tracks.
+        //
+        var mediaClone = template.clone();
+        var oldTracks = mediaClone.getTracks();
+        for (var i = 0; i < oldTracks.length; i++) {
+            mediaClone.removeTrack(oldTracks[i]);
+        }
+        if (audioTracks) {
+            for (var i = 0; i < audioTracks.length; i++) {
+                mediaClone.addTrack(audioTracks[i].clone());
+            }
+        }
+        if (videoTracks) {
+            for (var i = 0; i < videoTracks.length; i++) {
+                mediaClone.addTrack(videoTracks[i].clone());
+            }
+        }
+        for (var i = 0; i < oldTracks.length; i++) {
+            mediaClone.removeTrack(oldTracks[i]);
+        }
+        this.registerLocalMediaStreamByName(mediaClone, streamName);
+        return mediaClone;
+    }
+    exports.buildLocalMediaStream = buildLocalMediaStream;
+    var VideoAttributes = (function () {
+        function VideoAttributes() {
+        }
+        return VideoAttributes;
+    }());
+    exports.VideoAttributes = VideoAttributes;
+    function GetResolutionOfMediaStream(stream) {
+        return new Promise(function (resolve, reject) {
+            if (stream.getVideoTracks().length == 0) {
+                reject(new Error("Unable to get video resolution of mediastream with no video track"));
+                return;
+            }
+            var videoObj = document.createElement('video');
+            videoObj.muted = true;
+            var triesLeft = 30;
+            function destroyVideoObj() {
+                SetVideoObjectSrc(videoObj, null);
+                if (videoObj["removeNode"]) {
+                    videoObj["removeNode"](true);
+                }
+                else {
+                    var ele = document.createElement('div');
+                    ele.appendChild(videoObj);
+                    ele.removeChild(videoObj);
+                }
+            }
+            function tryToGetSize() {
+                if (videoObj.videoWidth > 0) {
+                    var result = { width: videoObj.videoWidth, height: videoObj.videoHeight };
+                    destroyVideoObj();
+                    resolve(result);
+                }
+                else if (triesLeft > 0) {
+                    triesLeft--;
+                    setTimeout(tryToGetSize, 300);
+                }
+                else {
+                    destroyVideoObj();
+                    reject(new Error("Unable to get mediastream resolution"));
+                }
+            }
+            SetVideoObjectSrc(videoObj, stream);
+            tryToGetSize();
+        });
+    }
+    exports.GetResolutionOfMediaStream = GetResolutionOfMediaStream;
+    function supportsGetUserMedia() {
+        return !!window.navigator && !!navigator.mediaDevices && !!navigator.mediaDevices.getUserMedia;
+    }
+    exports.supportsGetUserMedia = supportsGetUserMedia;
+    ;
 });
