@@ -3,16 +3,37 @@
     <head>
         <title>Multiparty Chatroom</title>
         <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-         <link rel="stylesheet" type="text/css" href="/easyrtc/easyrtc.css" />
 
         <meta name="viewport" content="width=device-width, minimum-scale=1, maximum-scale=1">
-        <script src="/socket.io/socket.io.js"></script>
-        <script type="text/javascript" src="/easyrtc/easyrtc.js"></script>
+      <link rel="stylesheet" type="text/css" href="../easyrtc.css" />
+
+        <!--hide-->
+        <link rel="stylesheet" type="text/css" href="css/landing.css" />
+        <!-- Prettify Code -->
+        <script type="text/javascript" src="../easyrtc_lang.js"></script>
+        <script src="../jsonpatch.js"></script>
+        <script src="../adapter/release/adapter.js"></script>
+        <script src="../mqtt/mqttws31.js" type="application/javascript"></script>
         <link rel="stylesheet" type="text/css" href="css/demo_room.css" />
-        <script type="text/javascript" src="js/demo_multiparty.js"></script>
     </head>
 
-    <body onload="appInit()">
+    <body>
+
+
+ <script data-main="../easyrtc_emulation.js" src="../require.js"></script>
+    <script type="text/javascript" src="../easyrtc_app.js"></script>
+    <script type="text/javascript" src="js/demo_multiparty.js"></script>
+    <script type="text/javascript">
+        setTimeout(function(){
+            easyrtc.dontAddCloseButtons(true);
+            easyrtc.setSocketUrl("test.easyrtc.com:9001");
+            appInit();
+        }, 3000);
+    </script>
+
+
+
+
         <div id="fullpage"  class="boxCommon" style="background-image:url(images/irongrip.png)">
             <video id="box0" class="transit boxCommon thumbCommon easyrtcMirror" muted="muted" volume="0" ></video>
             <video id="box1" class="transit boxCommon thumbCommon" style="visibility:hidden"></video>
@@ -28,5 +49,6 @@
             <img id="muteButton" class="transit boxCommon" onclick ="muteActiveBox()" src="images/button_mute.png" style="display:none;z-index:3" alt="mute button" />
             <img id="textEntryButton" class="transit boxCommon" onclick ="showTextEntry()" src="images/textEntry.png" style="z-index:3;display:none" alt="text button" />
         </div>
+
     </body>
 </html>

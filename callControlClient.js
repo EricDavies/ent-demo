@@ -166,6 +166,7 @@ define(["require", "exports"], function (require, exports) {
             this.sdpLocalFilter = null;
             this.customIceFilter = null;
             this.maxP2PLength = 12000; // the true maximum is around 16kbytes but we may see padding
+            this.pendingOffers = {}; // offers that we aren't ready to deal with yet.
             this.transferId = 0;
             this.sender = sender; // redundant statement, but won't hurt.
             this.applicationEventHandler = applicationEventHandler;
@@ -188,6 +189,32 @@ define(["require", "exports"], function (require, exports) {
         //
         CallControlClient.prototype.SetSdpRemoteFilter = function (filter) {
             this.sdpRemoteFilter = filter;
+        };
+        CallControlClient.prototype.sendCallFailureMessage = function (callId, errorCode, errMessage) {
+            this.sender.sendRequest("callPcClosed", {
+                callId: callId,
+                pcId: this.activeSessions[callId].pcId,
+                pcStats: {
+                    "errorCode": errorCode,
+                    "errorMsg": errMessage
+                }
+            });
+            if (this.activeSessions[callId].call) {
+                this.activeSessions[callId].call.close();
+                this.activeSessions[callId].call = null;
+            }
+            // we probably can't pass the onCallError up the chain because there could be a reconnect.
+            //  this.applicationEventHandler.onCallError(callId, errMessage);
+            //
+            //  if the call fails, we may be asked to restarted it, so we can't delete the call information yet.
+            //  however, if we haven't pulled it off in five minutes, it's fair game.
+            //
+            var self = this;
+            setTimeout(function () {
+                if (self.activeSessions[callId] && !this.acticeSessions[callId].call) {
+                    delete this.activeSessions[callId];
+                }
+            }, 1000 * 60 * 5);
         };
         /**
          * Gets the current ice state of a connection.
@@ -434,7 +461,6 @@ define(["require", "exports"], function (require, exports) {
                 }
                 var sendAnswer = function () {
                     console.log("entered sendAnswer");
-                    _this.sender.sendAck(messageId);
                     var answerBody = {
                         "callId": currentSession.callId,
                         "pcId": currentSession.pcId,
@@ -611,7 +637,14 @@ define(["require", "exports"], function (require, exports) {
             var currentSession = this.activeSessions[callId];
             var getVideo = null;
             var postVideo = function (stream) {
+                console.log("starting requestCallBody");
                 _this.requestCallBody(id, params, stream);
+                if (_this.pendingOffers[callId]) {
+                    if (_this.pendingOffers[callId].callback) {
+                        _this.pendingOffers[callId].callback();
+                    }
+                    delete _this.pendingOffers[callId];
+                }
             };
             if (params["callRole"] == "caller") {
                 if (callConstraints.offeringStream) {
@@ -624,6 +657,7 @@ define(["require", "exports"], function (require, exports) {
                 }
             }
             if (getVideo) {
+                this.pendingOffers[callId] = { callback: null };
                 getVideo.then(function (stream) {
                     postVideo(stream);
                 }, function (error) {
@@ -824,36 +858,47 @@ define(["require", "exports"], function (require, exports) {
             this.applicationEventHandler.onCallStart(newSession.callId, newSession.iAmCaller ? newSession.constraints.networkConstraints.answeringPeerId : newSession.constraints.networkConstraints.offeringPeerId, newSession.constraints);
         };
         CallControlClient.prototype.requestCallOfferSdp = function (id, params) {
-            var _this = this;
             if (!this.verifyJsonFields(params, ["callId", "offerSdp"])) {
                 this.sender.sendError(id, -1, "missing fields", {});
                 return;
             }
             var callId = params.callId;
             var modifiedSdp = this.sdpRemoteFilter ? this.sdpRemoteFilter(params.offerSdp, true) : params.offerSdp;
-            if (this.activeSessions[callId]) {
-                var currentSession_1 = this.activeSessions[callId];
-                console.log("creating new peerconnection with peerconfig =", currentSession_1.peerConfiguration);
-                currentSession_1.call = new RTCPeerConnection(currentSession_1.peerConfiguration);
-                this.addHandlersToPeer(currentSession_1, callId);
-                if (currentSession_1.outgoingStream) {
-                    console.log("adding stream to peer connection ", currentSession_1.outgoingStream);
-                    currentSession_1.call.addStream(currentSession_1.outgoingStream);
+            var self = this;
+            var action = function () {
+                var currentSession = self.activeSessions[callId];
+                console.log("creating new peerconnection with peerconfig =", currentSession.peerConfiguration);
+                currentSession.call = new RTCPeerConnection(currentSession.peerConfiguration);
+                self.addHandlersToPeer(currentSession, callId);
+                if (currentSession.outgoingStream) {
+                    console.log("adding stream to peer connection ", currentSession.outgoingStream);
+                    currentSession.call.addStream(currentSession.outgoingStream);
                 }
                 var sessionDescription = {
                     type: "offer",
                     sdp: modifiedSdp
                 };
                 console.log("setting remoteDescription of ", sessionDescription);
-                currentSession_1.call.setRemoteDescription(sessionDescription).then(function () {
+                currentSession.call.setRemoteDescription(sessionDescription).then(function () {
                     console.log("initiating send answer");
-                    _this.InitiateSendAnswer(id, currentSession_1, params.pcUpdateId);
+                    self.InitiateSendAnswer(id, currentSession, params.pcUpdateId);
                 }, function (reason) {
-                    if (_this.loggingEnabled) {
+                    if (self.loggingEnabled) {
                         console.log(getTimeString(), " attempt to setRemoteDescription of offer failed ", callId, modifiedSdp);
                     }
-                    _this.sender.sendError(id, -1, reason, {});
+                    self.sendCallFailureMessage(callId, "remote-description", "attempt to setRemoteDescription of offer failed");
                 });
+            };
+            //
+            // if the call message has already been fully processed then we can do the actual work (aka, action).
+            // otherwise we store the work so it can be dealt with once the call message has been handled.
+            //
+            if (this.activeSessions[callId]) {
+                action();
+                this.sender.sendAck(id);
+            }
+            else if (this.pendingOffers[callId]) {
+                this.pendingOffers[callId].callback = action;
             }
             else {
                 this.sender.sendError(id, -1, "no such call", {});
@@ -869,23 +914,23 @@ define(["require", "exports"], function (require, exports) {
             var callId = params.callId;
             var modifiedSdp = this.sdpRemoteFilter ? this.sdpRemoteFilter(params.answerSdp, false) : params.answerSdp;
             if (this.activeSessions[callId]) {
-                var currentSession_2 = this.activeSessions[callId];
+                var currentSession_1 = this.activeSessions[callId];
                 var sd = {
                     type: "answer",
                     sdp: modifiedSdp
                 };
                 console.log("answer to be set is ", sd);
-                currentSession_2.call.setRemoteDescription(sd).then(function () {
+                currentSession_1.call.setRemoteDescription(sd).then(function () {
                     self.sender.sendAck(id);
                     if (params.pcUpdateId) {
                         self.sender.sendRequest("callPcUpdated", {
                             callId: callId,
-                            pcId: currentSession_2.pcId,
+                            pcId: currentSession_1.pcId,
                             pcDefinition: {},
                             pcUpdateId: params.pcUpdateId
                         });
                     }
-                    self.flushCandidates(currentSession_2);
+                    self.flushCandidates(currentSession_1);
                 }, function (error) {
                     if (self.loggingEnabled) {
                         console.log(getTimeString(), " attempt to setRemoteDescription of answer failed ", callId, modifiedSdp);
@@ -907,12 +952,14 @@ define(["require", "exports"], function (require, exports) {
             var postVideo; // :(stream:MediaStream)=>void;
             if (this.activeSessions[callId]) {
                 this.sender.sendAck(id);
-                var currentSession_3 = this.activeSessions[callId];
-                currentSession_3.call.close();
+                var currentSession_2 = this.activeSessions[callId];
+                if (currentSession_2.call) {
+                    currentSession_2.call.close();
+                }
                 delete this.activeSessions[callId];
-                currentSession_3.sentEndCall = true;
-                this.sender.sendRequest("callPcClosed", { "callId": currentSession_3.callId,
-                    "pcId": currentSession_3.pcId, });
+                currentSession_2.sentEndCall = true;
+                this.sender.sendRequest("callPcClosed", { "callId": currentSession_2.callId,
+                    "pcId": currentSession_2.pcId, });
                 this.applicationEventHandler.onCallEnd(callId);
             }
             else {

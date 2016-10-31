@@ -272,11 +272,6 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             /** @private */
             this.disconnecting = false;
             /** @private */
-            //
-            // A map of ids to local media streams.
-            //
-            this.namedLocalMediaStreams = {};
-            /** @private */
             this.sessionFields = [];
             /** @private */
             this.receivedMediaConstraints = { offerToReceiveVideo: true, offerToReceiveAudio: true };
@@ -392,8 +387,8 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
              */
             this.getLocalMediaIds = function () {
                 var mediaIds = [];
-                for (var name_1 in this.namedLocalMediaStreams) {
-                    mediaIds.push(this.namedLocalMediaStreams[name_1].id);
+                for (var name_1 in this.localMediaStreams) {
+                    mediaIds.push(this.localMediaStreams[name_1].id);
                 }
                 return mediaIds;
             };
@@ -1130,8 +1125,8 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             if (!streamName) {
                 streamName = "default";
             }
-            if (this.namedLocalMediaStreams.hasOwnProperty(streamName)) {
-                return this.namedLocalMediaStreams[streamName];
+            if (this.localMediaStreams.hasOwnProperty(streamName)) {
+                return this.localMediaStreams[streamName];
             }
             else {
                 return null;
@@ -1143,7 +1138,7 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
          * must be done by the supplying party.
          */
         Easyrtc.prototype.register3rdPartyLocalMediaStream = function (stream, streamName) {
-            this.namedLocalMediaStreams[streamName] = stream;
+            this.localMediaStreams[streamName] = stream;
         };
         ;
         Easyrtc.prototype.getNameOfRemoteStream = function (easyrtcId, webrtcStream) {
@@ -2426,10 +2421,10 @@ define(["require", "exports", "./callControlClient", "./roomControlClient", "./M
             callConstraints.networkConstraints.answeringPeerId = otherUser;
             var requestingLabel = (callIndex == 0 && (this.receiveAudioEnabled || this.receiveVideoEnabled)) ? "default" : null;
             var self = this;
+            if (!self.peerConns[otherUser]) {
+                self.buildPeerConnection(otherUser, true, callSuccessCB, callFailureCB);
+            }
             function onSuccess(callId) {
-                if (!self.peerConns[otherUser]) {
-                    self.buildPeerConnection(otherUser, true, callSuccessCB, callFailureCB);
-                }
                 self.peerConns[otherUser].remoteStreamsPerCallId[callId] = [];
             }
             function onFailure(error) {

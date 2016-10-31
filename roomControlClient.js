@@ -64,7 +64,7 @@ define(["require", "exports", "./JSONPatchBuilder"], function (require, exports,
                     this.transport.sendAck(message.id);
                     this.listener.selfAddedToRoom(roomName);
                     this.confirmedRooms[roomName] = roomName;
-                    this.roomData[roomName] = { peers: {} };
+                    this.roomData[roomName] = { roomFields: {}, peers: {} };
                     break;
                 case "roomData":
                     this.transport.sendAck(message.id);
